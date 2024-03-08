@@ -6,72 +6,67 @@ let installed = false;
 export default async (context) => {
   context.log('Starting synthetic monitoring function for LEGO AT-AT.');
 
-  // Attempting Chromium installation if not already installed
   if (!installed) {
-    context.log('Chromium not detected. Preparing to install...');
     try {
-      context.log('Updating apk and fetching Chromium and dependencies...');
+      context.log('Installing Chromium...');
       execSync('apk update && apk add chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
-      context.log('Chromium and dependencies installed successfully. Big brain move completed.');
+      context.log('Chromium installed successfully.');
       installed = true;
     } catch (installError) {
-      context.log(`Failed to install Chromium. Error: ${installError}`);
+      context.log(`Error installing Chromium: ${installError}`);
       return context.res.send(`Error installing Chromium: ${installError.message}`);
     }
   } else {
-    context.log('Chromium already installed. Skipping installation.');
+    context.log('Chromium already installed.');
   }
 
-  // Launching Puppeteer with verbose logging
-  context.log('Launching Puppeteer with Chromium...');
+  context.log('Launching Puppeteer...');
   let browser;
   try {
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
-      args: ["--no-sandbox", "--headless", "--disable-gpu", "--disable-dev-shm-usage"],
+      args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
     });
-    context.log('Puppeteer launched successfully. Entering the matrix...');
+    context.log('Puppeteer launched successfully.');
   } catch (launchError) {
-    context.log(`Failed to launch Puppeteer. Error: ${launchError}`);
+    context.log(`Failed to launch Puppeteer: ${launchError}`);
     return context.res.send(`Error launching Puppeteer: ${launchError.message}`);
   }
 
   const page = await browser.newPage();
-  context.log('New browser page opened. Going to LEGO product page...');
+  context.log('Browser page opened.');
 
-  // Attempting to navigate to the LEGO product page
+  // Confirm Puppeteer launch by checking the user agent
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+  context.log(`Confirmed Puppeteer launch. User agent: ${userAgent}`);
+
   try {
-    const response = await page.goto('https://www.lego.com/en-us/product/at-at-75313', {
-      waitUntil: 'networkidle2',
-      timeout: 30000 // Adjust timeout as needed
-    });
-    context.log(`Navigated to LEGO product page. Status code: ${response.status()}.`);
-    if (response.status() !== 200) {
-      throw new Error(`Page load failed with status ${response.status()}`);
-    }
-  } catch (navError) {
-    context.log(`Failed to navigate to the page or page load issue. Error: ${navError}`);
+    context.log('Navigating to LEGO product page...');
+    const response = await page.goto('https://www.lego.com/en-us/product/at-at-75313', { waitUntil: 'networkidle2' });
+    context.log(`Page loaded with status code: ${response.status()}`);
+
+    // Additional check for product availability using Schema.org data
+    context.log('Checking for product availability using Schema.org data...');
+    const availabilityMetaContent = await page.$eval('span[itemprop="offers"] > meta[itemprop="availability"]', element => element.content);
+    const isBackOrder = availabilityMetaContent.toLowerCase().includes('backorder');
+    const available = !isBackOrder;
+
+    context.log(`Product availability check complete. Available: ${available}, Schema.org Availability: ${availabilityMetaContent}`);
+  } catch (error) {
+    context.log(`Error during page navigation or availability check: ${error}`);
     await browser.close();
-    return context.res.send(`Error navigating to LEGO page: ${navError.message}`);
+    return context.res.send(`Error: ${error.message}`);
   }
 
-  // Checking for product availability
-  context.log('Checking for product availability...');
-  const availabilitySelector = '[data-test="add-to-cart-button"]';
-  const available = await page.$(availabilitySelector) !== null;
-  context.log(`Product availability check complete. Available: ${available}`);
-
-  // Wrapping up
   await browser.close();
-  context.log('Browser session closed. Function execution completed.');
+  context.log('Browser session closed.');
 
-  // Sending the final result
   if (available) {
-    context.log('Product is available. Celebrate accordingly.');
+    context.log('Product is available.');
     return context.res.send('Product is available.');
   } else {
-    context.log('Product is not available. Time to log off and cry.');
+    context.log('Product is not available.');
     return context.res.send('Product is not available.');
   }
 };
