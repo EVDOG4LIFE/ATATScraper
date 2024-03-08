@@ -1,33 +1,41 @@
-import { Client } from 'node-appwrite';
+import { execSync } from 'node:child_process';
+import puppeteer from 'puppeteer';
 
-// This is your Appwrite function
-// It's executed each time we get a request
-export default async ({ req, res, log, error }) => {
-  // Why not try the Appwrite SDK?
-  //
-  // const client = new Client()
-  //    .setEndpoint('https://cloud.appwrite.io/v1')
-  //    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
-  //    .setKey(process.env.APPWRITE_API_KEY);
+let installed = false;
 
-  // You can log messages to the console
-  log('Hello, Logs!');
+export default async (context) => {
+  try {
+    if (!installed) {
+      execSync('apk add /usr/local/server/src/function/*.apk');
+      context.log('Chromium installed successfully.');
+      installed = true;
+    } else {
+      context.log('Chromium already installed.');
+    }
 
-  // If something goes wrong, log an error
-  error('Hello, Errors!');
+    const browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+      args: ["--no-sandbox", "--headless", "--disable-gpu", "--disable-dev-shm-usage"],
+    });
+    const page = await browser.newPage();
+    await page.goto('https://www.lego.com/en-us/product/at-at-75313');
 
-  // The `req` object contains the request data
-  if (req.method === 'GET') {
-    // Send a response with the res object helpers
-    // `res.send()` dispatches a string back to the client
-    return res.send('Hello, World!');
+    // Selector for availability status; this needs to be adjusted based on the actual page content
+    const availabilitySelector = '[data-test="add-to-cart-button"]';
+    const available = await page.$(availabilitySelector) !== null;
+
+    await browser.close();
+
+    if (available) {
+      context.log('Product is available.');
+      return context.res.send('Product is available.');
+    } else {
+      context.log('Product is not available.');
+      return context.res.send('Product is not available.');
+    }
+  } catch (e) {
+    context.log(`Error during execution: ${e.message}`);
+    return context.res.send(`Error: ${e.message}`);
   }
-
-  // `res.json()` is a handy helper for sending JSON
-  return res.json({
-    motto: 'Build like a team of hundreds_',
-    learn: 'https://appwrite.io/docs',
-    connect: 'https://appwrite.io/discord',
-    getInspired: 'https://builtwith.appwrite.io',
-  });
 };
