@@ -49,10 +49,8 @@ export default async (context) => {
     // Additional check for product availability using Schema.org data
     context.log('Checking for product availability using Schema.org data...');
     const availabilityMetaContent = await page.$eval('span[itemprop="offers"] > meta[itemprop="availability"]', element => element.content);
-    const isBackOrder = availabilityMetaContent.toLowerCase().includes('backorder');
-    const available = !isBackOrder;
-
-    context.log(`Product availability check complete. Available: ${available}, Schema.org Availability: ${availabilityMetaContent}`);
+    const isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || availabilityMetaContent.toLowerCase().includes('instock');
+    context.log(`Schema.org Availability: ${availabilityMetaContent}, Available for purchase: ${isAvailable}`);
   } catch (error) {
     context.log(`Error during page navigation or availability check: ${error}`);
     await browser.close();
@@ -62,11 +60,11 @@ export default async (context) => {
   await browser.close();
   context.log('Browser session closed.');
 
-  if (available) {
-    context.log('Product is available.');
-    return context.res.send('Product is available.');
+  if (isAvailable) {
+    context.log('Product is available for purchase.');
+    return context.res.send('Product is available for purchase.');
   } else {
-    context.log('Product is not available.');
-    return context.res.send('Product is not available.');
+    context.log('Product is not available for purchase.');
+    return context.res.send('Product is not available for purchase.');
   }
 };
