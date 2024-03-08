@@ -1,48 +1,30 @@
-# ⚡ Node.js Starter Function
+# Puppeteer Sample Function
 
-A simple starter function. Edit `src/main.js` to get started and create something awesome! 🚀
+This Node.js function is designed to check the availability of the LEGO AT-AT product on the official LEGO website using Puppeteer and Chromium. It performs synthetic monitoring by simulating a visit to the product's page and checks the product's availability based on Schema.org data.
 
-## 🧰 Usage
+## Prerequisites
 
-### GET /
+- An Appwrite server setup and running.
+- A project created in Appwrite with this function added.
 
-- Returns a "Hello, World!" message.
+## Setup Instructions
 
-**Response**
+### Step 1: Add the Function to Appwrite
 
-Sample `200` Response:
+Create a new function in your Appwrite console. Choose the Node.js runtime.
 
-```text
-Hello, World!
-```
+### Step 2: Configure Environment Variable
 
-### POST, PUT, PATCH, DELETE /
+In the function settings in the Appwrite console, add an environment variable:
 
-- Returns a "Learn More" JSON response.
+- Key: `PUPPETEER_EXECUTABLE_PATH`
+- Value: `/usr/bin/chromium-browser`
 
-**Response**
+This variable instructs Puppeteer to use the Chromium browser installed on the server.
 
-Sample `200` Response:
+### Step 3: Modify Build Settings
 
-```json
-{
-  "motto": "Build like a team of hundreds_",
-  "learn": "https://appwrite.io/docs",
-  "connect": "https://appwrite.io/discord",
-  "getInspired": "https://builtwith.appwrite.io"
-}
-```
+In the function's Configuration > Build Settings, add the following command:
 
-## ⚙️ Configuration
-
-| Setting           | Value         |
-|-------------------|---------------|
-| Runtime           | Node (18.0)   |
-| Entrypoint        | `src/main.js` |
-| Build Commands    | `npm install` |
-| Permissions       | `any`         |
-| Timeout (Seconds) | 15            |
-
-## 🔒 Environment Variables
-
-No environment variables required.
+```cmd
+apk update && apk fetch chromium nss freetype harfbuzz ca-certificates ttf-freefont && npm i
