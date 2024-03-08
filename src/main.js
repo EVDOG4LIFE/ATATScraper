@@ -20,51 +20,39 @@ export default async (context) => {
     context.log('Chromium already installed.');
   }
 
-  context.log('Launching Puppeteer...');
-  let browser;
   try {
-    browser = await puppeteer.launch({
+    context.log('Launching Puppeteer...');
+    const browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
       args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
     });
     context.log('Puppeteer launched successfully.');
-  } catch (launchError) {
-    context.log(`Failed to launch Puppeteer: ${launchError}`);
-    return context.res.send(`Error launching Puppeteer: ${launchError.message}`);
-  }
+    
+    const page = await browser.newPage();
+    context.log('Browser page opened.');
 
-  const page = await browser.newPage();
-  context.log('Browser page opened.');
-
-  // Confirm Puppeteer launch by checking the user agent
-  const userAgent = await page.evaluate(() => navigator.userAgent);
-  context.log(`Confirmed Puppeteer launch. User agent: ${userAgent}`);
-
-  try {
     context.log('Navigating to LEGO product page...');
     const response = await page.goto('https://www.lego.com/en-us/product/at-at-75313', { waitUntil: 'networkidle2' });
     context.log(`Page loaded with status code: ${response.status()}`);
 
-    // Additional check for product availability using Schema.org data
     context.log('Checking for product availability using Schema.org data...');
     const availabilityMetaContent = await page.$eval('span[itemprop="offers"] > meta[itemprop="availability"]', element => element.content);
     const isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || availabilityMetaContent.toLowerCase().includes('instock');
     context.log(`Schema.org Availability: ${availabilityMetaContent}, Available for purchase: ${isAvailable}`);
-  } catch (error) {
-    context.log(`Error during page navigation or availability check: ${error}`);
+
     await browser.close();
+    context.log('Browser session closed.');
+
+    if (isAvailable) {
+      context.log('Product is available for purchase.');
+      return context.res.send('Product is available for purchase.');
+    } else {
+      context.log('Product is not available for purchase.');
+      return context.res.send('Product is not available for purchase.');
+    }
+  } catch (error) {
+    context.log(`Error during Puppeteer operations: ${error}`);
     return context.res.send(`Error: ${error.message}`);
-  }
-
-  await browser.close();
-  context.log('Browser session closed.');
-
-  if (isAvailable) {
-    context.log('Product is available for purchase.');
-    return context.res.send('Product is available for purchase.');
-  } else {
-    context.log('Product is not available for purchase.');
-    return context.res.send('Product is not available for purchase.');
   }
 };
