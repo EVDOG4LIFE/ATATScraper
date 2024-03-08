@@ -33,7 +33,7 @@ export default async (context) => {
     context.log('Browser page opened.');
 
     context.log('Navigating to LEGO product page...');
-    const response = await page.goto('https://www.lego.com/en-us/product/at-at-7531', { waitUntil: 'networkidle2' });
+    const response = await page.goto('https://www.lego.com/en-us/product/at-at-75313', { waitUntil: 'networkidle2' });
     context.log(`Page loaded with status code: ${response.status()}`);
 
     context.log('Checking for product availability using Schema.org data...');
