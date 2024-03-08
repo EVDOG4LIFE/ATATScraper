@@ -10,7 +10,7 @@ export default async (context) => {
     try {
       context.log('Installing Chromium...');
       execSync('apk update && apk add chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
-      context.log('Chromium installed successfully.');
+      context.log('Chromium installed successfully...');
       installed = true;
     } catch (installError) {
       context.log(`Error installing Chromium: ${installError}`);
