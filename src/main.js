@@ -1,19 +1,43 @@
+import { execSync } from 'node:child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
 
+let installed = false;
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
 export default async (context) => {
   const startTime = performance.now();
   context.log('Starting enhanced synthetic monitoring function for LEGO AT-AT.');
 
+  // Ensure Chromium is installed
+  if (!installed) {
+    try {
+      context.log('Chromium not installed. Beginning installation process...');
+      const installStartTime = performance.now();
+      execSync('apk update && apk add chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
+      const installEndTime = performance.now();
+      context.log(`Chromium installed successfully in ${(installEndTime - installStartTime).toFixed(2)}ms.`);
+      installed = true;
+    } catch (installError) {
+      context.error(`Critical error during Chromium installation: ${installError}`);
+      return {
+        statusCode: 500,
+        body: `Error installing Chromium: ${installError.message}`
+      };
+    }
+  } else {
+    context.log('Chromium already installed. Skipping installation step.');
+  }
+
   let browser;
   try {
+    // Initialize Puppeteer
     context.log('Initializing Puppeteer...');
     const puppeteerStartTime = performance.now();
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
+      args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
       defaultViewport: { width: 1920, height: 1080 },
     });
     const puppeteerEndTime = performance.now();
@@ -22,7 +46,7 @@ export default async (context) => {
     const page = await browser.newPage();
     context.log('New browser page opened.');
 
-    // Optional: Disable images and CSS to speed up loading
+    // Set request interception to block unnecessary resources
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
@@ -32,10 +56,11 @@ export default async (context) => {
       }
     });
 
+    // Navigate to the LEGO product page
     context.log(`Navigating to LEGO product page: ${LEGO_URL}`);
     const navigationStartTime = performance.now();
     const response = await page.goto(LEGO_URL, { 
-      waitUntil: 'domcontentloaded',
+      waitUntil: 'networkidle2',
       timeout: 60000 // Increased timeout to 60 seconds
     });
     const navigationEndTime = performance.now();
@@ -45,6 +70,7 @@ export default async (context) => {
       throw new Error(`Unexpected status code: ${response.status()}`);
     }
 
+    // Extract product availability information
     context.log('Extracting product availability information...');
     const extractionStartTime = performance.now();
     const availabilityMetaContent = await page.$eval('span[itemprop="offers"] > meta[itemprop="availability"]', element => element.content);
@@ -59,23 +85,26 @@ export default async (context) => {
     const totalExecutionTime = endTime - startTime;
     context.log(`Total execution time: ${totalExecutionTime.toFixed(2)}ms`);
 
+    // Return the result
     return {
-      status: 200,
-      json: {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         isAvailable,
         availabilityStatus: availabilityMetaContent,
         executionTimeMs: totalExecutionTime
-      }
+      })
     };
 
   } catch (error) {
     context.error(`Critical error during monitoring process: ${error}`);
     return {
-      status: 500,
-      json: {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         error: error.message,
         stack: error.stack
-      }
+      })
     };
   } finally {
     if (browser) {
