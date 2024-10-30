@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
 import { Client, Storage, ID } from 'node-appwrite';
-import { Blob } from 'buffer';
+import { InputFile } from 'node-appwrite/file';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
@@ -107,32 +107,47 @@ export default async (context) => {
     context.log(`Product available for purchase: ${isAvailable}`);
 
     // Take screenshot
+    context.log('Taking screenshot...');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `screenshot-${timestamp}.png`;
     
     // Get screenshot as Buffer
+    context.log('Capturing screenshot as buffer...');
     const screenshotBuffer = await page.screenshot({
       type: 'png'
     });
+    context.log(`Screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
 
-    // Create a Blob from the buffer
-    const blob = new Blob([screenshotBuffer], { type: 'image/png' });
-
-    // Create a FormData-like object structure
-    const formData = {
-        file: blob,
-        filename: filename,
-        contentType: 'image/png',
-        size: screenshotBuffer.length
-    };
+    // Create InputFile
+    context.log('Creating InputFile from buffer...');
+    const inputFile = InputFile.fromBuffer(
+      screenshotBuffer,
+      filename,
+      'image/png'
+    );
+    context.log('InputFile created successfully');
+    context.log('InputFile details:', {
+      filename: inputFile.filename,
+      type: inputFile.type,
+      size: inputFile.size
+    });
 
     // Upload screenshot to Appwrite storage
+    context.log('Starting file upload to Appwrite storage...');
+    context.log('Upload parameters:', {
+      bucketId: APPWRITE_BUCKET_ID,
+      fileId: ID.unique(),
+      inputFileType: typeof inputFile,
+      inputFileProperties: Object.keys(inputFile)
+    });
+
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID,
       ID.unique(),
-      formData
+      inputFile
     );
     
+    context.log('Upload response:', uploadResult);
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
     const endTime = performance.now();
@@ -153,6 +168,7 @@ export default async (context) => {
 
   } catch (error) {
     context.error(`Critical error during monitoring process: ${error}`);
+    context.error('Error stack:', error.stack);
 
     // Attempt to take a screenshot and upload it
     if (browser) {
@@ -161,30 +177,36 @@ export default async (context) => {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const filename = `error-screenshot-${timestamp}.png`;
         
-        // Get error screenshot as Buffer
+        context.log('Taking error screenshot...');
         const screenshotBuffer = await page.screenshot({
           type: 'png'
         });
+        context.log(`Error screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
 
-        // Create a Blob from the buffer
-        const blob = new Blob([screenshotBuffer], { type: 'image/png' });
+        context.log('Creating InputFile for error screenshot...');
+        const inputFile = InputFile.fromBuffer(
+          screenshotBuffer,
+          filename,
+          'image/png'
+        );
+        context.log('Error screenshot InputFile created successfully');
+        context.log('Error InputFile details:', {
+          filename: inputFile.filename,
+          type: inputFile.type,
+          size: inputFile.size
+        });
 
-        // Create a FormData-like object structure
-        const formData = {
-            file: blob,
-            filename: filename,
-            contentType: 'image/png',
-            size: screenshotBuffer.length
-        };
-
+        context.log('Starting error screenshot upload...');
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID,
           ID.unique(),
-          formData
+          inputFile
         );
+        context.log('Error screenshot upload response:', uploadResult);
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
         context.error(`Failed to take/upload error screenshot: ${screenshotError}`);
+        context.error('Error screenshot error stack:', screenshotError.stack);
       }
     } else {
       context.log('Browser not available; cannot take error screenshot.');
