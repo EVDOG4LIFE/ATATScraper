@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
-import { Client, Storage, ID, InputFile } from 'node-appwrite';
+import { Client, Storage, ID } from 'node-appwrite';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
@@ -107,20 +107,20 @@ export default async (context) => {
 
     // Take screenshot
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const screenshotBuffer = await page.screenshot({
-      type: 'png',
-      encoding: 'binary'
-    });
-
-    // Create InputFile from buffer
     const filename = `screenshot-${timestamp}.png`;
-    const inputFile = InputFile.fromBuffer(screenshotBuffer, filename);
+    
+    // Get screenshot as Base64 and convert to Buffer
+    const base64String = await page.screenshot({
+      type: 'png',
+      encoding: 'base64'
+    });
+    const screenshotBuffer = Buffer.from(base64String, 'base64');
 
-    // Upload screenshot to Appwrite storage using InputFile
+    // Upload screenshot to Appwrite storage
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID,
       ID.unique(),
-      inputFile
+      screenshotBuffer
     );
     
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
@@ -149,19 +149,19 @@ export default async (context) => {
       try {
         const page = await browser.newPage();
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const screenshotBuffer = await page.screenshot({
-          type: 'png',
-          encoding: 'binary'
-        });
         
-        // Create InputFile from buffer for error screenshot
-        const filename = `error-screenshot-${timestamp}.png`;
-        const inputFile = InputFile.fromBuffer(screenshotBuffer, filename);
+        // Get error screenshot as Base64 and convert to Buffer
+        const base64String = await page.screenshot({
+          type: 'png',
+          encoding: 'base64'
+        });
+        const screenshotBuffer = Buffer.from(base64String, 'base64');
 
+        // Upload error screenshot
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID,
           ID.unique(),
-          inputFile
+          screenshotBuffer
         );
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
