@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
+import { Client, Storage, InputFile } from 'node-appwrite';
 
 let installed = false;
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
@@ -8,6 +9,36 @@ const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 export default async (context) => {
   const startTime = performance.now();
   context.log('Starting enhanced synthetic monitoring function for LEGO AT-AT.');
+
+  // Ensure required Appwrite environment variables are set
+  const {
+    APPWRITE_ENDPOINT,
+    APPWRITE_PROJECT_ID,
+    APPWRITE_API_KEY,
+    APPWRITE_BUCKET_ID
+  } = process.env;
+
+  if (!APPWRITE_ENDPOINT || !APPWRITE_PROJECT_ID || !APPWRITE_API_KEY || !APPWRITE_BUCKET_ID) {
+    const missingVars = [];
+    if (!APPWRITE_ENDPOINT) missingVars.push('APPWRITE_ENDPOINT');
+    if (!APPWRITE_PROJECT_ID) missingVars.push('APPWRITE_PROJECT_ID');
+    if (!APPWRITE_API_KEY) missingVars.push('APPWRITE_API_KEY');
+    if (!APPWRITE_BUCKET_ID) missingVars.push('APPWRITE_BUCKET_ID');
+    context.error(`Missing required Appwrite configuration environment variables: ${missingVars.join(', ')}`);
+    return {
+      statusCode: 500,
+      body: `Missing required Appwrite configuration environment variables: ${missingVars.join(', ')}`
+    };
+  }
+
+  // Initialize Appwrite client and storage
+  const client = new Client();
+  client
+    .setEndpoint(APPWRITE_ENDPOINT)
+    .setProject(APPWRITE_PROJECT_ID)
+    .setKey(APPWRITE_API_KEY);
+
+  const storage = new Storage(client);
 
   // Ensure Chromium is installed
   if (!installed) {
@@ -30,6 +61,7 @@ export default async (context) => {
   }
 
   let browser;
+  let page;
   try {
     // Initialize Puppeteer
     context.log('Initializing Puppeteer...');
@@ -43,7 +75,7 @@ export default async (context) => {
     const puppeteerEndTime = performance.now();
     context.log(`Puppeteer launched successfully in ${(puppeteerEndTime - puppeteerStartTime).toFixed(2)}ms.`);
     
-    const page = await browser.newPage();
+    page = await browser.newPage();
     context.log('New browser page opened.');
 
     // Set request interception to block unnecessary resources
@@ -81,6 +113,18 @@ export default async (context) => {
     context.log(`Schema.org Availability: ${availabilityMetaContent}`);
     context.log(`Product available for purchase: ${isAvailable}`);
 
+    // Take screenshot
+    const screenshotBuffer = await page.screenshot();
+
+    // Upload screenshot to Appwrite storage
+    const inputFile = InputFile.fromBuffer(screenshotBuffer, `screenshot-${Date.now()}.png`);
+    const uploadResult = await storage.createFile(
+      APPWRITE_BUCKET_ID, // bucketId
+      'unique()', // fileId, 'unique()' generates a unique ID
+      inputFile
+    );
+    context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
+
     const endTime = performance.now();
     const totalExecutionTime = endTime - startTime;
     context.log(`Total execution time: ${totalExecutionTime.toFixed(2)}ms`);
@@ -92,12 +136,32 @@ export default async (context) => {
       body: JSON.stringify({
         isAvailable,
         availabilityStatus: availabilityMetaContent,
-        executionTimeMs: totalExecutionTime
+        executionTimeMs: totalExecutionTime,
+        screenshotFileId: uploadResult.$id
       })
     };
 
   } catch (error) {
     context.error(`Critical error during monitoring process: ${error}`);
+
+    // Attempt to take a screenshot and upload it
+    if (page) {
+      try {
+        const screenshotBuffer = await page.screenshot();
+        const inputFile = InputFile.fromBuffer(screenshotBuffer, `error-screenshot-${Date.now()}.png`);
+        const uploadResult = await storage.createFile(
+          APPWRITE_BUCKET_ID, // bucketId
+          'unique()', // fileId
+          inputFile
+        );
+        context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
+      } catch (screenshotError) {
+        context.error(`Failed to take/upload error screenshot: ${screenshotError}`);
+      }
+    } else {
+      context.log('Page object not available; cannot take error screenshot.');
+    }
+
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
