@@ -105,20 +105,22 @@ export default async (context) => {
     context.log(`Schema.org Availability: ${availabilityMetaContent}`);
     context.log(`Product available for purchase: ${isAvailable}`);
 
-    // Take screenshot with proper encoding
+    // Take screenshot
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const screenshotBuffer = await page.screenshot({
       type: 'png',
       encoding: 'binary'
     });
 
-    // Upload screenshot to Appwrite storage with proper file information
+    // Generate a unique filename
+    const filename = `screenshot-${timestamp}.png`;
+
+    // Upload screenshot to Appwrite storage
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID,
       ID.unique(),
-      new File([screenshotBuffer], `screenshot-${timestamp}.png`, {
-        type: 'image/png'
-      })
+      screenshotBuffer,
+      filename
     );
     
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
@@ -152,12 +154,13 @@ export default async (context) => {
           encoding: 'binary'
         });
         
+        const filename = `error-screenshot-${timestamp}.png`;
+        
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID,
           ID.unique(),
-          new File([screenshotBuffer], `error-screenshot-${timestamp}.png`, {
-            type: 'image/png'
-          })
+          screenshotBuffer,
+          filename
         );
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
