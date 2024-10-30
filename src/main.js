@@ -1,9 +1,8 @@
-import { execSync } from 'node:child_process';
+import { execSync } from 'child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
-import { Client, Storage } from 'node-appwrite';
+import { Client, Storage } from 'appwrite';
 
-let installed = false;
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
 export default async (context) => {
@@ -41,41 +40,36 @@ export default async (context) => {
   const storage = new Storage(client);
 
   // Ensure Chromium is installed
-  if (!installed) {
+  try {
+    context.log('Checking if Chromium is installed...');
+    execSync('chromium-browser --version', { stdio: 'ignore' });
+    context.log('Chromium is already installed.');
+  } catch {
     try {
-      context.log('Chromium not installed. Beginning installation process...');
-      const installStartTime = performance.now();
+      context.log('Chromium not found. Installing...');
       execSync('apk update && apk add chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
-      const installEndTime = performance.now();
-      context.log(`Chromium installed successfully in ${(installEndTime - installStartTime).toFixed(2)}ms.`);
-      installed = true;
+      context.log('Chromium installed successfully.');
     } catch (installError) {
-      context.error(`Critical error during Chromium installation: ${installError}`);
+      context.error(`Error installing Chromium: ${installError}`);
       return {
         statusCode: 500,
         body: `Error installing Chromium: ${installError.message}`
       };
     }
-  } else {
-    context.log('Chromium already installed. Skipping installation step.');
   }
 
   let browser;
-  let page;
   try {
     // Initialize Puppeteer
     context.log('Initializing Puppeteer...');
-    const puppeteerStartTime = performance.now();
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
       args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
       defaultViewport: { width: 1920, height: 1080 },
     });
-    const puppeteerEndTime = performance.now();
-    context.log(`Puppeteer launched successfully in ${(puppeteerEndTime - puppeteerStartTime).toFixed(2)}ms.`);
-    
-    page = await browser.newPage();
+
+    const page = await browser.newPage();
     context.log('New browser page opened.');
 
     // Set request interception to block unnecessary resources
@@ -90,13 +84,11 @@ export default async (context) => {
 
     // Navigate to the LEGO product page
     context.log(`Navigating to LEGO product page: ${LEGO_URL}`);
-    const navigationStartTime = performance.now();
-    const response = await page.goto(LEGO_URL, { 
+    const response = await page.goto(LEGO_URL, {
       waitUntil: 'networkidle2',
       timeout: 60000 // Increased timeout to 60 seconds
     });
-    const navigationEndTime = performance.now();
-    context.log(`Page loaded with status code: ${response.status()} in ${(navigationEndTime - navigationStartTime).toFixed(2)}ms.`);
+    context.log(`Page loaded with status code: ${response.status()}.`);
 
     if (response.status() !== 200) {
       throw new Error(`Unexpected status code: ${response.status()}`);
@@ -104,11 +96,11 @@ export default async (context) => {
 
     // Extract product availability information
     context.log('Extracting product availability information...');
-    const extractionStartTime = performance.now();
-    const availabilityMetaContent = await page.$eval('span[itemprop="offers"] > meta[itemprop="availability"]', element => element.content);
+    const availabilityMetaContent = await page.$eval(
+      'span[itemprop="offers"] > meta[itemprop="availability"]',
+      element => element.content
+    );
     const isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || availabilityMetaContent.toLowerCase().includes('instock');
-    const extractionEndTime = performance.now();
-    context.log(`Availability data extracted in ${(extractionEndTime - extractionStartTime).toFixed(2)}ms.`);
 
     context.log(`Schema.org Availability: ${availabilityMetaContent}`);
     context.log(`Product available for purchase: ${isAvailable}`);
@@ -120,7 +112,7 @@ export default async (context) => {
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID, // bucketId
       'unique()', // fileId
-      InputFile.fromBuffer(screenshotBuffer, 'screenshot.png') // Wrap buffer with filename
+      screenshotBuffer // Pass the buffer directly
     );
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
@@ -144,20 +136,21 @@ export default async (context) => {
     context.error(`Critical error during monitoring process: ${error}`);
 
     // Attempt to take a screenshot and upload it
-    if (page) {
+    if (browser) {
       try {
+        const page = await browser.newPage();
         const screenshotBuffer = await page.screenshot();
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID, // bucketId
           'unique()', // fileId
-          InputFile.fromBuffer(screenshotBuffer, 'error_screenshot.png') // Wrap buffer with filename
+          screenshotBuffer // Pass the buffer directly
         );
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
         context.error(`Failed to take/upload error screenshot: ${screenshotError}`);
       }
     } else {
-      context.log('Page object not available; cannot take error screenshot.');
+      context.log('Browser not available; cannot take error screenshot.');
     }
 
     return {
