@@ -1,7 +1,8 @@
 import { execSync } from 'node:child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
-import { Client, Storage, InputFile } from 'node-appwrite';
+import { Client, Storage } from 'node-appwrite';
+import fs from 'fs';
 
 let installed = false;
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
@@ -117,11 +118,10 @@ export default async (context) => {
     const screenshotBuffer = await page.screenshot();
 
     // Upload screenshot to Appwrite storage
-    const inputFile = InputFile.fromBuffer(screenshotBuffer, `screenshot-${Date.now()}.png`);
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID, // bucketId
-      'unique()', // fileId, 'unique()' generates a unique ID
-      inputFile
+      'unique()', // fileId
+      screenshotBuffer // Pass the buffer directly
     );
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
@@ -148,11 +148,10 @@ export default async (context) => {
     if (page) {
       try {
         const screenshotBuffer = await page.screenshot();
-        const inputFile = InputFile.fromBuffer(screenshotBuffer, `error-screenshot-${Date.now()}.png`);
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID, // bucketId
           'unique()', // fileId
-          inputFile
+          screenshotBuffer // Pass the buffer directly
         );
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
