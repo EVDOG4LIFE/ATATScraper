@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
-import { Client, Storage } from 'appwrite';
+import { Client, Storage } from 'node-appwrite';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
