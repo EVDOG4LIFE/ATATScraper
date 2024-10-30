@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
-import { Client, Storage } from 'node-appwrite';
+import { Client, Storage, ID } from 'node-appwrite';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
@@ -105,15 +105,22 @@ export default async (context) => {
     context.log(`Schema.org Availability: ${availabilityMetaContent}`);
     context.log(`Product available for purchase: ${isAvailable}`);
 
-    // Take screenshot
-    const screenshotBuffer = await page.screenshot();
+    // Take screenshot with proper encoding
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const screenshotBuffer = await page.screenshot({
+      type: 'png',
+      encoding: 'binary'
+    });
 
-    // Upload screenshot to Appwrite storage
+    // Upload screenshot to Appwrite storage with proper file information
     const uploadResult = await storage.createFile(
-      APPWRITE_BUCKET_ID, // bucketId
-      'unique()', // fileId
-      screenshotBuffer // Pass the buffer directly
+      APPWRITE_BUCKET_ID,
+      ID.unique(),
+      new File([screenshotBuffer], `screenshot-${timestamp}.png`, {
+        type: 'image/png'
+      })
     );
+    
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
     const endTime = performance.now();
@@ -139,11 +146,18 @@ export default async (context) => {
     if (browser) {
       try {
         const page = await browser.newPage();
-        const screenshotBuffer = await page.screenshot();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const screenshotBuffer = await page.screenshot({
+          type: 'png',
+          encoding: 'binary'
+        });
+        
         const uploadResult = await storage.createFile(
-          APPWRITE_BUCKET_ID, // bucketId
-          'unique()', // fileId
-          screenshotBuffer // Pass the buffer directly
+          APPWRITE_BUCKET_ID,
+          ID.unique(),
+          new File([screenshotBuffer], `error-screenshot-${timestamp}.png`, {
+            type: 'image/png'
+          })
         );
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
