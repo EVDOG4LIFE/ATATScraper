@@ -73,7 +73,8 @@ export default async (context) => {
         '--no-zygote',
         '--deterministic-fetch',
         '--disable-features=IsolateOrigins',
-        '--disable-site-isolation-trials'
+        '--disable-site-isolation-trials',
+        '--window-size=1920,1080'
       ],
       defaultViewport: { width: 1920, height: 1080 }
     });
@@ -87,27 +88,42 @@ export default async (context) => {
         // Set realistic user agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
         
-        // Enable request interception but allow critical resources
+        // Enable request interception with more permissive rules
         await page.setRequestInterception(true);
         page.on('request', (req) => {
           const resourceType = req.resourceType();
-          if (resourceType === 'document' || resourceType === 'script' || resourceType === 'xhr' || resourceType === 'fetch') {
+          // Allow most essential resource types
+          if (['document', 'script', 'stylesheet', 'image', 'font', 'xhr', 'fetch'].includes(resourceType)) {
             req.continue();
           } else {
             req.abort();
           }
         });
 
-        // Set cookies to bypass initial consent page
-        await page.setCookie({
-          name: 'Cookie_Consent',
-          value: 'true',
-          domain: '.lego.com',
-          path: '/'
-        });
+        // Set multiple cookies to handle various consent and region settings
+        await page.setCookie(
+          {
+            name: 'Cookie_Consent',
+            value: 'true',
+            domain: '.lego.com',
+            path: '/'
+          },
+          {
+            name: 'csAgeVerified',
+            value: 'true',
+            domain: '.lego.com',
+            path: '/'
+          },
+          {
+            name: 'region',
+            value: 'us',
+            domain: '.lego.com',
+            path: '/'
+          }
+        );
 
-        // Navigate with extended timeout
-        context.log(`Attempting to load product page (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+        // Navigate to page
+        context.log(`Loading product page (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
         const response = await page.goto(LEGO_URL, {
           waitUntil: ['domcontentloaded', 'networkidle0'],
           timeout: 30000
@@ -117,9 +133,24 @@ export default async (context) => {
           throw new Error(`HTTP ${response.status()}: ${response.statusText()}`);
         }
 
-        // Wait for critical elements
-        await page.waitForSelector('span[itemprop="offers"]', { timeout: 10000 });
+        // Handle cookie consent popup if it appears
+        try {
+          await page.waitForSelector('#cookie-banner', { timeout: 5000 });
+          await page.click('#cookie-banner-accept-all');
+          await page.waitForTimeout(1000); // Wait for banner to disappear
+        } catch (e) {
+          context.log('No cookie banner found or already accepted');
+        }
+
+        // Wait for critical elements with increased timeout
+        await page.waitForSelector('span[itemprop="offers"]', { timeout: 20000 });
         context.log('Critical page elements loaded.');
+        
+        // Ensure proper page load
+        await page.waitForFunction(() => {
+          const images = document.getElementsByTagName('img');
+          return Array.from(images).some(img => img.complete && img.naturalHeight !== 0);
+        }, { timeout: 10000 });
         
         // Extract availability information
         const availability = await page.$eval(
@@ -134,11 +165,21 @@ export default async (context) => {
 
         context.log('Product data extracted:', { availability, price });
 
-        // Take full page screenshot
+        // Take full page screenshot with proper layout
         context.log('Capturing full page screenshot...');
+        
+        // Ensure the page is properly sized
+        await page.setViewport({ width: 1920, height: 1080 });
+        
+        // Wait for any lazy-loaded images
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.waitForTimeout(2000); // Wait for lazy loading
+        await page.evaluate(() => window.scrollTo(0, 0));
+        
         const screenshot = await page.screenshot({
           type: 'png',
-          fullPage: true
+          fullPage: true,
+          captureBeyondViewport: true
         });
 
         // Upload screenshot with metadata
