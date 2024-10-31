@@ -6,13 +6,15 @@ import { InputFile } from 'node-appwrite/file';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 5000; // 5 seconds
+const RETRY_DELAY = 5000;
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export default async (context) => {
   const startTime = performance.now();
   context.log('Starting enhanced synthetic monitoring function for LEGO AT-AT.');
 
-  // Validate environment variables
+  // Environment validation (same as before...)
   const requiredVars = {
     APPWRITE_ENDPOINT: process.env.APPWRITE_ENDPOINT,
     APPWRITE_PROJECT_ID: process.env.APPWRITE_PROJECT_ID,
@@ -29,7 +31,7 @@ export default async (context) => {
     return { statusCode: 500, body: `Missing environment variables: ${missingVars.join(', ')}` };
   }
 
-  // Initialize Appwrite client
+  // Initialize Appwrite (same as before...)
   const client = new Client();
   client
     .setEndpoint(requiredVars.APPWRITE_ENDPOINT)
@@ -38,7 +40,7 @@ export default async (context) => {
 
   const storage = new Storage(client);
 
-  // Install Chromium if needed
+  // Chromium installation check (same as before...)
   try {
     context.log('Verifying Chromium installation...');
     execSync('chromium-browser --version', { stdio: 'ignore' });
@@ -59,7 +61,6 @@ export default async (context) => {
 
   let browser;
   try {
-    // Launch browser with optimal settings
     context.log('Launching browser...');
     browser = await puppeteer.launch({
       headless: true,
@@ -69,63 +70,61 @@ export default async (context) => {
         '--disable-gpu',
         '--disable-dev-shm-usage',
         '--disable-setuid-sandbox',
-        '--no-first-run',
-        '--no-zygote',
-        '--deterministic-fetch',
-        '--disable-features=IsolateOrigins',
-        '--disable-site-isolation-trials',
-        '--window-size=1920,1080'
+        '--window-size=1920,1080',
+        '--start-maximized'
       ],
-      defaultViewport: { width: 1920, height: 1080 }
+      defaultViewport: null  // This allows the viewport to match the window size
     });
 
-    // Retry logic for page navigation and data extraction
     const getProductData = async (retryCount = 0) => {
       const page = await browser.newPage();
       context.log(`Created new page instance (attempt ${retryCount + 1}/${MAX_RETRIES})`);
       
       try {
-        // Set realistic user agent
+        // Set a realistic user agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
         
-        // Enable request interception with more permissive rules
+        // Set viewport
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        // Set default navigation timeout
+        page.setDefaultNavigationTimeout(30000);
+
+        // Allow all resource types initially
         await page.setRequestInterception(true);
-        page.on('request', (req) => {
-          const resourceType = req.resourceType();
-          // Allow most essential resource types
-          if (['document', 'script', 'stylesheet', 'image', 'font', 'xhr', 'fetch'].includes(resourceType)) {
-            req.continue();
-          } else {
-            req.abort();
-          }
+        page.on('request', (request) => {
+          request.continue();
         });
 
-        // Set multiple cookies to handle various consent and region settings
+        // Set geolocation to US
+        await page.evaluateOnNewDocument(() => {
+          Object.defineProperty(navigator, 'language', { get: function() { return 'en-US'; } });
+          Object.defineProperty(navigator, 'languages', { get: function() { return ['en-US', 'en']; } });
+        });
+
+        // Set cookies for region and preferences
         await page.setCookie(
           {
-            name: 'Cookie_Consent',
-            value: 'true',
-            domain: '.lego.com',
-            path: '/'
+            name: 'regionalRedirect',
+            value: 'false',
+            domain: '.lego.com'
           },
           {
-            name: 'csAgeVerified',
-            value: 'true',
-            domain: '.lego.com',
-            path: '/'
-          },
-          {
-            name: 'region',
+            name: 'USER_REGION',
             value: 'us',
-            domain: '.lego.com',
-            path: '/'
+            domain: '.lego.com'
+          },
+          {
+            name: 'USER_INFO',
+            value: 'region:us/lang:en',
+            domain: '.lego.com'
           }
         );
 
-        // Navigate to page
+        // Navigate to the page
         context.log(`Loading product page (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
         const response = await page.goto(LEGO_URL, {
-          waitUntil: ['domcontentloaded', 'networkidle0'],
+          waitUntil: 'networkidle0',
           timeout: 30000
         });
 
@@ -133,26 +132,42 @@ export default async (context) => {
           throw new Error(`HTTP ${response.status()}: ${response.statusText()}`);
         }
 
-        // Handle cookie consent popup if it appears
+        // Handle cookie consent if present
         try {
-          await page.waitForSelector('#cookie-banner', { timeout: 5000 });
-          await page.click('#cookie-banner-accept-all');
-          await page.waitForTimeout(1000); // Wait for banner to disappear
+          const consentButton = await page.$('#consent-tracking-accept');
+          if (consentButton) {
+            await consentButton.click();
+            await delay(1000);
+          }
         } catch (e) {
-          context.log('No cookie banner found or already accepted');
+          context.log('No cookie consent button found or already accepted');
         }
 
-        // Wait for critical elements with increased timeout
+        // Wait for key elements
         await page.waitForSelector('span[itemprop="offers"]', { timeout: 20000 });
         context.log('Critical page elements loaded.');
-        
-        // Ensure proper page load
-        await page.waitForFunction(() => {
-          const images = document.getElementsByTagName('img');
-          return Array.from(images).some(img => img.complete && img.naturalHeight !== 0);
-        }, { timeout: 10000 });
-        
-        // Extract availability information
+
+        // Scroll to load all content
+        await page.evaluate(async () => {
+          await new Promise((resolve) => {
+            let totalHeight = 0;
+            const distance = 100;
+            const timer = setInterval(() => {
+              const scrollHeight = document.body.scrollHeight;
+              window.scrollBy(0, distance);
+              totalHeight += distance;
+              
+              if(totalHeight >= scrollHeight) {
+                clearInterval(timer);
+                resolve();
+              }
+            }, 100);
+          });
+        });
+
+        await delay(2000); // Wait for any lazy loading
+
+        // Extract product data
         const availability = await page.$eval(
           'span[itemprop="offers"] > meta[itemprop="availability"]',
           element => element.content
@@ -165,37 +180,23 @@ export default async (context) => {
 
         context.log('Product data extracted:', { availability, price });
 
-        // Take full page screenshot with proper layout
-        context.log('Capturing full page screenshot...');
-        
-        // Ensure the page is properly sized
-        await page.setViewport({ width: 1920, height: 1080 });
-        
-        // Wait for any lazy-loaded images
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await page.waitForTimeout(2000); // Wait for lazy loading
-        await page.evaluate(() => window.scrollTo(0, 0));
-        
+        // Take screenshot
+        context.log('Capturing screenshot...');
         const screenshot = await page.screenshot({
           type: 'png',
-          fullPage: true,
-          captureBeyondViewport: true
+          fullPage: true
         });
 
-        // Upload screenshot with metadata
+        // Upload screenshot
         const timestamp = new Date().toISOString();
         const filename = `at-at-monitor-${timestamp}.png`;
-        context.log(`Preparing to upload screenshot as ${filename}`);
-        
         const inputFile = InputFile.fromBuffer(screenshot, filename, 'image/png');
-        context.log('Screenshot buffer converted to InputFile');
         
         const uploadResult = await storage.createFile(
           requiredVars.APPWRITE_BUCKET_ID,
           ID.unique(),
           inputFile
         );
-        context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
         return {
           isAvailable: availability.toLowerCase().includes('instock') || availability.toLowerCase().includes('backorder'),
@@ -208,44 +209,19 @@ export default async (context) => {
       } catch (error) {
         context.error(`Error during page processing (attempt ${retryCount + 1}):`, error);
         
-        // Capture error screenshot if possible
-        try {
-          context.log('Attempting to capture error state screenshot...');
-          const errorScreenshot = await page.screenshot({
-            type: 'png',
-            fullPage: true
-          });
-          
-          const errorTimestamp = new Date().toISOString();
-          const errorFilename = `error-at-at-monitor-${errorTimestamp}.png`;
-          const errorInputFile = InputFile.fromBuffer(errorScreenshot, errorFilename, 'image/png');
-          
-          const errorUploadResult = await storage.createFile(
-            requiredVars.APPWRITE_BUCKET_ID,
-            ID.unique(),
-            errorInputFile
-          );
-          context.log(`Error screenshot uploaded. File ID: ${errorUploadResult.$id}`);
-        } catch (screenshotError) {
-          context.error('Failed to capture error screenshot:', screenshotError);
-        }
-
         if (retryCount < MAX_RETRIES - 1) {
-          context.log(`Attempt ${retryCount + 1} failed: ${error.message}. Retrying after ${RETRY_DELAY}ms...`);
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+          context.log(`Attempt ${retryCount + 1} failed: ${error.message}. Retrying...`);
+          await delay(RETRY_DELAY);
           return getProductData(retryCount + 1);
         }
         throw error;
       } finally {
         await page.close();
-        context.log('Page instance closed.');
       }
     };
 
-    // Execute monitoring with retry logic
     const productData = await getProductData();
     const executionTime = performance.now() - startTime;
-    context.log('Monitoring completed successfully:', { executionTime });
 
     return {
       statusCode: 200,
@@ -274,7 +250,6 @@ export default async (context) => {
   } finally {
     if (browser) {
       await browser.close();
-      context.log('Browser session terminated.');
     }
   }
 };
