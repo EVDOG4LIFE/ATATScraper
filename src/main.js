@@ -7,6 +7,11 @@ import { Blob } from 'buffer';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
+// Helper function to replace waitForTimeout
+const wait = async (page, ms) => {
+  await page.evaluate(ms => new Promise(resolve => setTimeout(resolve, ms)), ms);
+};
+
 export default async (context) => {
   const startTime = performance.now();
   context.log('Starting enhanced synthetic monitoring function for LEGO AT-AT.');
@@ -81,8 +86,7 @@ export default async (context) => {
     context.log('New browser page opened.');
 
     // Configure page settings
-    await page.setDefaultTimeout(30000);
-    await page.setDefaultNavigationTimeout(30000);
+    page.setDefaultNavigationTimeout(30000);
 
     // Configure request interception
     await page.setRequestInterception(true);
@@ -126,13 +130,13 @@ export default async (context) => {
       context.log('Clicked continue on age gate');
       
       // Wait for age gate to disappear
-      await page.waitForTimeout(2000);
+      await wait(page, 2000);
 
       // Wait for any redirection/navigation to complete
       await Promise.race([
         page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 5000 })
           .catch(() => context.log('Navigation timeout after age gate - continuing anyway')),
-        page.waitForTimeout(5000) // Fallback timeout
+        wait(page, 5000) // Fallback timeout
       ]);
     } catch (e) {
       context.log('Age gate handling failed or not present:', e.message);
@@ -150,7 +154,7 @@ export default async (context) => {
     }
 
     // Additional wait for dynamic content
-    await page.waitForTimeout(5000);
+    await wait(page, 5000);
 
     // Extract product availability information
     context.log('Extracting product availability information...');
