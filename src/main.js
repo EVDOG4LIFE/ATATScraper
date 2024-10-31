@@ -66,7 +66,7 @@ export default async (context) => {
     await page.setViewport({ width: 1920, height: 1080 });
     page.setDefaultNavigationTimeout(30000);
 
-    // Set regional settings
+    // Set cookies for region and age verification
     await page.setCookie(
       {
         name: 'regionalRedirect',
@@ -76,6 +76,26 @@ export default async (context) => {
       {
         name: 'USER_REGION',
         value: 'us',
+        domain: '.lego.com'
+      },
+      {
+        name: 'ak_bmsc',  // Age verification cookie
+        value: 'verified',
+        domain: '.lego.com'
+      },
+      {
+        name: 'csAgeVerified',  // Another age check cookie
+        value: 'true',
+        domain: '.lego.com'
+      },
+      {
+        name: 'OptanonAlertBoxClosed',  // Cookie consent
+        value: new Date().toISOString(),
+        domain: '.lego.com'
+      },
+      {
+        name: 'cookie-consent',  // Additional consent cookie
+        value: 'true',
         domain: '.lego.com'
       }
     );
