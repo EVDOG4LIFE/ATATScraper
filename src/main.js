@@ -3,230 +3,237 @@ import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
 import { Client, Storage, ID } from 'node-appwrite';
 import { InputFile } from 'node-appwrite/file';
-import { Blob } from 'buffer';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 5000; // 5 seconds
 
 export default async (context) => {
   const startTime = performance.now();
-  context.log('Starting super premium synthetic monitoring function.');
+  context.log('Starting enhanced synthetic monitoring function for LEGO AT-AT.');
 
-  // Ensure required Appwrite environment variables are set
-  const {
-    APPWRITE_ENDPOINT,
-    APPWRITE_PROJECT_ID,
-    APPWRITE_API_KEY,
-    APPWRITE_BUCKET_ID
-  } = process.env;
+  // Validate environment variables
+  const requiredVars = {
+    APPWRITE_ENDPOINT: process.env.APPWRITE_ENDPOINT,
+    APPWRITE_PROJECT_ID: process.env.APPWRITE_PROJECT_ID,
+    APPWRITE_API_KEY: process.env.APPWRITE_API_KEY,
+    APPWRITE_BUCKET_ID: process.env.APPWRITE_BUCKET_ID
+  };
 
-  if (!APPWRITE_ENDPOINT || !APPWRITE_PROJECT_ID || !APPWRITE_API_KEY || !APPWRITE_BUCKET_ID) {
-    const missingVars = [];
-    if (!APPWRITE_ENDPOINT) missingVars.push('APPWRITE_ENDPOINT');
-    if (!APPWRITE_PROJECT_ID) missingVars.push('APPWRITE_PROJECT_ID');
-    if (!APPWRITE_API_KEY) missingVars.push('APPWRITE_API_KEY');
-    if (!APPWRITE_BUCKET_ID) missingVars.push('APPWRITE_BUCKET_ID');
+  const missingVars = Object.entries(requiredVars)
+    .filter(([_, value]) => !value)
+    .map(([key]) => key);
+
+  if (missingVars.length > 0) {
     context.error(`Missing required Appwrite configuration environment variables: ${missingVars.join(', ')}`);
-    return {
-      statusCode: 500,
-      body: `Missing required Appwrite configuration environment variables: ${missingVars.join(', ')}`
-    };
+    return { statusCode: 500, body: `Missing environment variables: ${missingVars.join(', ')}` };
   }
 
-  // Initialize Appwrite client and storage
+  // Initialize Appwrite client
   const client = new Client();
   client
-    .setEndpoint(APPWRITE_ENDPOINT)
-    .setProject(APPWRITE_PROJECT_ID)
-    .setKey(APPWRITE_API_KEY);
+    .setEndpoint(requiredVars.APPWRITE_ENDPOINT)
+    .setProject(requiredVars.APPWRITE_PROJECT_ID)
+    .setKey(requiredVars.APPWRITE_API_KEY);
 
   const storage = new Storage(client);
 
-  // Ensure Chromium is installed
+  // Install Chromium if needed
   try {
-    context.log('Checking if Chromium is installed...');
+    context.log('Verifying Chromium installation...');
     execSync('chromium-browser --version', { stdio: 'ignore' });
     context.log('Chromium is already installed.');
   } catch {
     try {
-      context.log('Chromium not found. Installing...');
-      execSync('apk update && apk add chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
+      context.log('Installing Chromium and dependencies...');
+      execSync('apk update && apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont', { stdio: 'inherit' });
       context.log('Chromium installed successfully.');
     } catch (installError) {
-      context.error(`Error installing Chromium: ${installError}`);
+      context.error(`Failed to install Chromium: ${installError}`);
       return {
         statusCode: 500,
-        body: `Error installing Chromium: ${installError.message}`
+        body: `Chromium installation failed: ${installError.message}`
       };
     }
   }
 
   let browser;
   try {
-    // Initialize Puppeteer with increased timeout
-    context.log('Initializing Puppeteer...');
+    // Launch browser with optimal settings
+    context.log('Launching browser...');
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
-      args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
-      defaultViewport: { width: 1920, height: 1080 },
+      args: [
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--disable-setuid-sandbox',
+        '--no-first-run',
+        '--no-zygote',
+        '--deterministic-fetch',
+        '--disable-features=IsolateOrigins',
+        '--disable-site-isolation-trials'
+      ],
+      defaultViewport: { width: 1920, height: 1080 }
     });
 
-    const page = await browser.newPage();
-    context.log('New browser page opened.');
+    // Retry logic for page navigation and data extraction
+    const getProductData = async (retryCount = 0) => {
+      const page = await browser.newPage();
+      context.log(`Created new page instance (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      
+      try {
+        // Set realistic user agent
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+        
+        // Enable request interception but allow critical resources
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          const resourceType = req.resourceType();
+          if (resourceType === 'document' || resourceType === 'script' || resourceType === 'xhr' || resourceType === 'fetch') {
+            req.continue();
+          } else {
+            req.abort();
+          }
+        });
 
-    // Set longer timeout for navigation
-    page.setDefaultNavigationTimeout(90000); // 90 seconds timeout
+        // Set cookies to bypass initial consent page
+        await page.setCookie({
+          name: 'Cookie_Consent',
+          value: 'true',
+          domain: '.lego.com',
+          path: '/'
+        });
 
-    // Navigate to the LEGO product page and wait for full load
-    context.log(`Navigating to LEGO product page: ${LEGO_URL}`);
-    const response = await page.goto(LEGO_URL, {
-      waitUntil: ['load', 'networkidle0'], // Wait for both load event and network idle
-      timeout: 90000 // 90 seconds timeout
-    });
-    context.log(`Page loaded with status code: ${response.status()}.`);
+        // Navigate with extended timeout
+        context.log(`Attempting to load product page (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
+        const response = await page.goto(LEGO_URL, {
+          waitUntil: ['domcontentloaded', 'networkidle0'],
+          timeout: 30000
+        });
 
-    if (response.status() !== 200) {
-      throw new Error(`Unexpected status code: ${response.status()}`);
-    }
+        if (response.status() !== 200) {
+          throw new Error(`HTTP ${response.status()}: ${response.statusText()}`);
+        }
 
-    // Wait for key elements to ensure page is fully rendered
-    await page.waitForSelector('img', { timeout: 30000 }); // Wait for images
-    await page.waitForTimeout(5000); // Additional wait for dynamic content
+        // Wait for critical elements
+        await page.waitForSelector('span[itemprop="offers"]', { timeout: 10000 });
+        context.log('Critical page elements loaded.');
+        
+        // Extract availability information
+        const availability = await page.$eval(
+          'span[itemprop="offers"] > meta[itemprop="availability"]',
+          element => element.content
+        );
 
-    // Extract product availability information
-    context.log('Extracting product availability information...');
-    const availabilityMetaContent = await page.$eval(
-      'span[itemprop="offers"] > meta[itemprop="availability"]',
-      element => element.content
-    );
-    const isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || availabilityMetaContent.toLowerCase().includes('instock');
+        const price = await page.$eval(
+          'meta[itemprop="price"]',
+          element => element.content
+        );
 
-    context.log(`Schema.org Availability: ${availabilityMetaContent}`);
-    context.log(`Product available for purchase: ${isAvailable}`);
+        context.log('Product data extracted:', { availability, price });
 
-    // Take full-page screenshot
-    context.log('Taking screenshot...');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `screenshot-${timestamp}.png`;
-    
-    // Get screenshot as Buffer with full page capture
-    context.log('Capturing screenshot as buffer...');
-    const screenshotBuffer = await page.screenshot({
-      type: 'png',
-      fullPage: true, // Capture full page
-      timeout: 30000 // 30 seconds timeout for screenshot
-    });
-    context.log(`Screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
+        // Take full page screenshot
+        context.log('Capturing full page screenshot...');
+        const screenshot = await page.screenshot({
+          type: 'png',
+          fullPage: true
+        });
 
-    // Create Blob from buffer
-    context.log('Creating Blob from buffer...');
-    const blob = new Blob([screenshotBuffer], { type: 'image/png' });
-    context.log('Blob created successfully');
-    context.log('Blob details:', {
-      size: blob.size,
-      type: blob.type
-    });
+        // Upload screenshot with metadata
+        const timestamp = new Date().toISOString();
+        const filename = `at-at-monitor-${timestamp}.png`;
+        context.log(`Preparing to upload screenshot as ${filename}`);
+        
+        const inputFile = InputFile.fromBuffer(screenshot, filename, 'image/png');
+        context.log('Screenshot buffer converted to InputFile');
+        
+        const uploadResult = await storage.createFile(
+          requiredVars.APPWRITE_BUCKET_ID,
+          ID.unique(),
+          inputFile
+        );
+        context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
-    // Create InputFile from Blob
-    context.log('Creating InputFile from blob...');
-    const inputFile = InputFile.fromBuffer(blob, filename);
-    context.log('InputFile created successfully');
-    context.log('InputFile details:', {
-      filename: inputFile.filename,
-      type: inputFile.type,
-      size: inputFile.size
-    });
+        return {
+          isAvailable: availability.toLowerCase().includes('instock') || availability.toLowerCase().includes('backorder'),
+          availability,
+          price,
+          screenshotId: uploadResult.$id,
+          timestamp
+        };
 
-    // Upload screenshot to Appwrite storage
-    context.log('Starting file upload to Appwrite storage...');
-    const uploadResult = await storage.createFile(
-      APPWRITE_BUCKET_ID,
-      ID.unique(),
-      inputFile
-    );
-    
-    context.log('Upload response:', uploadResult);
-    context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
+      } catch (error) {
+        context.error(`Error during page processing (attempt ${retryCount + 1}):`, error);
+        
+        // Capture error screenshot if possible
+        try {
+          context.log('Attempting to capture error state screenshot...');
+          const errorScreenshot = await page.screenshot({
+            type: 'png',
+            fullPage: true
+          });
+          
+          const errorTimestamp = new Date().toISOString();
+          const errorFilename = `error-at-at-monitor-${errorTimestamp}.png`;
+          const errorInputFile = InputFile.fromBuffer(errorScreenshot, errorFilename, 'image/png');
+          
+          const errorUploadResult = await storage.createFile(
+            requiredVars.APPWRITE_BUCKET_ID,
+            ID.unique(),
+            errorInputFile
+          );
+          context.log(`Error screenshot uploaded. File ID: ${errorUploadResult.$id}`);
+        } catch (screenshotError) {
+          context.error('Failed to capture error screenshot:', screenshotError);
+        }
 
-    const endTime = performance.now();
-    const totalExecutionTime = endTime - startTime;
-    context.log(`Total execution time: ${totalExecutionTime.toFixed(2)}ms`);
+        if (retryCount < MAX_RETRIES - 1) {
+          context.log(`Attempt ${retryCount + 1} failed: ${error.message}. Retrying after ${RETRY_DELAY}ms...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+          return getProductData(retryCount + 1);
+        }
+        throw error;
+      } finally {
+        await page.close();
+        context.log('Page instance closed.');
+      }
+    };
 
-    // Return the result
+    // Execute monitoring with retry logic
+    const productData = await getProductData();
+    const executionTime = performance.now() - startTime;
+    context.log('Monitoring completed successfully:', { executionTime });
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        isAvailable,
-        availabilityStatus: availabilityMetaContent,
-        executionTimeMs: totalExecutionTime,
-        screenshotFileId: uploadResult.$id
+        ...productData,
+        executionTimeMs: executionTime,
+        success: true
       })
     };
 
   } catch (error) {
-    context.error(`Critical error during monitoring process: ${error}`);
-    context.error('Error stack:', error.stack);
-
-    // Attempt to take a screenshot and upload it
-    if (browser) {
-      try {
-        const page = await browser.newPage();
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `error-screenshot-${timestamp}.png`;
-        
-        context.log('Taking error screenshot...');
-        const screenshotBuffer = await page.screenshot({
-          type: 'png',
-          fullPage: true
-        });
-        context.log(`Error screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
-
-        context.log('Creating Blob for error screenshot...');
-        const blob = new Blob([screenshotBuffer], { type: 'image/png' });
-        context.log('Blob created successfully');
-        context.log('Blob details:', {
-          size: blob.size,
-          type: blob.type
-        });
-
-        context.log('Creating InputFile for error screenshot...');
-        const inputFile = InputFile.fromBuffer(blob, filename);
-        context.log('Error screenshot InputFile created successfully');
-        context.log('Error InputFile details:', {
-          filename: inputFile.filename,
-          type: inputFile.type,
-          size: inputFile.size
-        });
-
-        context.log('Starting error screenshot upload...');
-        const uploadResult = await storage.createFile(
-          APPWRITE_BUCKET_ID,
-          ID.unique(),
-          inputFile
-        );
-        context.log('Error screenshot upload response:', uploadResult);
-        context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
-      } catch (screenshotError) {
-        context.error(`Failed to take/upload error screenshot: ${screenshotError}`);
-        context.error('Error screenshot error stack:', screenshotError.stack);
-      }
-    } else {
-      context.log('Browser not available; cannot take error screenshot.');
-    }
-
+    const executionTime = performance.now() - startTime;
+    context.error('Monitoring failed after all retries:', error);
+    
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         error: error.message,
-        stack: error.stack
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+        executionTimeMs: executionTime,
+        success: false
       })
     };
   } finally {
     if (browser) {
       await browser.close();
-      context.log('Browser session closed.');
+      context.log('Browser session terminated.');
     }
   }
-}
+};
