@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer';
 import { performance } from 'perf_hooks';
 import { Client, Storage, ID } from 'node-appwrite';
 import { InputFile } from 'node-appwrite/file';
+import { Blob } from 'buffer';
 
 const LEGO_URL = 'https://www.lego.com/en-us/product/at-at-75313';
 
@@ -66,95 +67,138 @@ export default async (context) => {
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 'chromium-browser',
-      args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+      args: [
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-web-security",
+        "--disable-features=IsolateOrigins,site-per-process"
+      ],
       defaultViewport: { width: 1920, height: 1080 },
     });
 
     const page = await browser.newPage();
     context.log('New browser page opened.');
 
-    // Set request interception to block unnecessary resources
+    // Configure page settings
+    await page.setDefaultTimeout(30000);
+    await page.setDefaultNavigationTimeout(30000);
+
+    // Configure request interception
     await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
-        req.abort();
+    page.on('request', (request) => {
+      // Only block analytics and tracking
+      if (
+        request.url().includes('analytics') ||
+        request.url().includes('tracking') ||
+        request.url().includes('google-analytics') ||
+        request.url().includes('doubleclick')
+      ) {
+        request.abort();
       } else {
-        req.continue();
+        request.continue();
       }
     });
 
-    // Navigate to the LEGO product page
-    context.log(`Navigating to LEGO product page: ${LEGO_URL}`);
-    const response = await page.goto(LEGO_URL, {
-      waitUntil: 'networkidle2',
-      timeout: 60000 // Increased timeout to 60 seconds
+    // Set headers
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br'
     });
-    context.log(`Page loaded with status code: ${response.status()}.`);
 
-    if (response.status() !== 200) {
-      throw new Error(`Unexpected status code: ${response.status()}`);
+    // Navigate to page
+    context.log(`Navigating to LEGO product page: ${LEGO_URL}`);
+    await page.goto(LEGO_URL, {
+      waitUntil: 'networkidle0',
+      timeout: 30000
+    });
+
+    // Handle age gate
+    context.log('Looking for age gate dialog...');
+    try {
+      await page.waitForSelector('[data-test="age-gate-overlay"]', { timeout: 10000 });
+      context.log('Age gate found, attempting to click continue...');
+
+      await page.waitForSelector('[data-test="age-gate-grown-up-cta"]', { timeout: 5000 });
+      await page.click('[data-test="age-gate-grown-up-cta"]');
+      
+      context.log('Clicked continue on age gate');
+      
+      // Wait for age gate to disappear
+      await page.waitForTimeout(2000);
+
+      // Wait for any redirection/navigation to complete
+      await Promise.race([
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 5000 })
+          .catch(() => context.log('Navigation timeout after age gate - continuing anyway')),
+        page.waitForTimeout(5000) // Fallback timeout
+      ]);
+    } catch (e) {
+      context.log('Age gate handling failed or not present:', e.message);
     }
+
+    // Wait for product page content
+    context.log('Waiting for page content to load...');
+    try {
+      await Promise.all([
+        page.waitForSelector('img', { timeout: 10000 }),
+        page.waitForSelector('span[itemprop="offers"]', { timeout: 10000 })
+      ]);
+    } catch (e) {
+      context.log('Some page elements failed to load:', e.message);
+    }
+
+    // Additional wait for dynamic content
+    await page.waitForTimeout(5000);
 
     // Extract product availability information
     context.log('Extracting product availability information...');
-    const availabilityMetaContent = await page.$eval(
-      'span[itemprop="offers"] > meta[itemprop="availability"]',
-      element => element.content
-    );
-    const isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || availabilityMetaContent.toLowerCase().includes('instock');
+    let availabilityMetaContent = '';
+    let isAvailable = false;
+    try {
+      availabilityMetaContent = await page.$eval(
+        'span[itemprop="offers"] > meta[itemprop="availability"]',
+        element => element.content
+      );
+      isAvailable = availabilityMetaContent.toLowerCase().includes('backorder') || 
+                    availabilityMetaContent.toLowerCase().includes('instock');
 
-    context.log(`Schema.org Availability: ${availabilityMetaContent}`);
-    context.log(`Product available for purchase: ${isAvailable}`);
+      context.log(`Schema.org Availability: ${availabilityMetaContent}`);
+      context.log(`Product available for purchase: ${isAvailable}`);
+    } catch (e) {
+      context.log('Failed to extract availability information:', e.message);
+    }
 
     // Take screenshot
     context.log('Taking screenshot...');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `screenshot-${timestamp}.png`;
     
-    // Get screenshot as Buffer
-    context.log('Capturing screenshot as buffer...');
     const screenshotBuffer = await page.screenshot({
-      type: 'png'
+      type: 'png',
+      fullPage: true
     });
     context.log(`Screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
 
-    // Create InputFile
-    context.log('Creating InputFile from buffer...');
-    const inputFile = InputFile.fromBuffer(
-      screenshotBuffer,
-      filename,
-      'image/png'
-    );
-    context.log('InputFile created successfully');
-    context.log('InputFile details:', {
-      filename: inputFile.filename,
-      type: inputFile.type,
-      size: inputFile.size
-    });
-
-    // Upload screenshot to Appwrite storage
-    context.log('Starting file upload to Appwrite storage...');
-    context.log('Upload parameters:', {
-      bucketId: APPWRITE_BUCKET_ID,
-      fileId: ID.unique(),
-      inputFileType: typeof inputFile,
-      inputFileProperties: Object.keys(inputFile)
-    });
-
+    // Upload to Appwrite
+    context.log('Creating blob and input file...');
+    const blob = new Blob([screenshotBuffer], { type: 'image/png' });
+    const inputFile = InputFile.fromBuffer(blob, filename);
+    
+    context.log('Uploading to Appwrite storage...');
     const uploadResult = await storage.createFile(
       APPWRITE_BUCKET_ID,
       ID.unique(),
       inputFile
     );
     
-    context.log('Upload response:', uploadResult);
     context.log(`Screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
 
     const endTime = performance.now();
     const totalExecutionTime = endTime - startTime;
     context.log(`Total execution time: ${totalExecutionTime.toFixed(2)}ms`);
 
-    // Return the result
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -170,7 +214,7 @@ export default async (context) => {
     context.error(`Critical error during monitoring process: ${error}`);
     context.error('Error stack:', error.stack);
 
-    // Attempt to take a screenshot and upload it
+    // Attempt to take error screenshot
     if (browser) {
       try {
         const page = await browser.newPage();
@@ -179,37 +223,23 @@ export default async (context) => {
         
         context.log('Taking error screenshot...');
         const screenshotBuffer = await page.screenshot({
-          type: 'png'
+          type: 'png',
+          fullPage: true
         });
-        context.log(`Error screenshot captured. Buffer size: ${screenshotBuffer.length} bytes`);
+        
+        const blob = new Blob([screenshotBuffer], { type: 'image/png' });
+        const inputFile = InputFile.fromBuffer(blob, filename);
 
-        context.log('Creating InputFile for error screenshot...');
-        const inputFile = InputFile.fromBuffer(
-          screenshotBuffer,
-          filename,
-          'image/png'
-        );
-        context.log('Error screenshot InputFile created successfully');
-        context.log('Error InputFile details:', {
-          filename: inputFile.filename,
-          type: inputFile.type,
-          size: inputFile.size
-        });
-
-        context.log('Starting error screenshot upload...');
         const uploadResult = await storage.createFile(
           APPWRITE_BUCKET_ID,
           ID.unique(),
           inputFile
         );
-        context.log('Error screenshot upload response:', uploadResult);
         context.log(`Error screenshot uploaded successfully. File ID: ${uploadResult.$id}`);
       } catch (screenshotError) {
         context.error(`Failed to take/upload error screenshot: ${screenshotError}`);
         context.error('Error screenshot error stack:', screenshotError.stack);
       }
-    } else {
-      context.log('Browser not available; cannot take error screenshot.');
     }
 
     return {
