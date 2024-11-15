@@ -1,6 +1,6 @@
 # Puppeteer Sample Function
 
-This Node.js function is designed to check the availability of the LEGO AT-AT product on the official LEGO website using Puppeteer and Chromium. It performs synthetic monitoring by simulating a visit to the product's page and checks the product's availability based on Schema.org data.
+This is a sample working Node.js function that's designed to check the availability of the coveted LEGO UCS AT-AT product on the official website using Puppeteer and Chromium. It performs synthetic monitoring by simulating a visit to the product's page and checks the product's availability based on Schema.org data. It then takes a screenshot and uploads to storage for later viewing pleasure. 
 
 ## Prerequisites
 
