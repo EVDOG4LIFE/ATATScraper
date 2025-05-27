@@ -10,7 +10,7 @@ This is a sample working Node.js function that's designed to check the availabil
 ## Setup Instructions
 
 ### Step 1: Add the Function to Appwrite
-
+ 
 Create a new function in your Appwrite console. Choose the Node.js runtime.
 
 ### Step 2: Configure Environment Variable
