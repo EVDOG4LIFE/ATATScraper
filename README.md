@@ -3,7 +3,7 @@
 This is a sample working Node.js function that's designed to check the availability of the coveted LEGO UCS AT-AT product on the official website using Puppeteer and Chromium. It performs synthetic monitoring by simulating a visit to the product's page and checks the product's availability based on Schema.org data. It then takes a screenshot and uploads to storage for later viewing pleasure.  
 
 ## Prerequisites
-
+ 
 - An Appwrite server setup and running. 
 - A project created in Appwrite with this function added.
 
