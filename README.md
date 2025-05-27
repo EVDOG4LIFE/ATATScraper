@@ -8,7 +8,7 @@ This is a sample working Node.js function that's designed to check the availabil
 - A project created in Appwrite with this function added.
 
 ## Setup Instructions
-
+ 
 ### Step 1: Add the Function to Appwrite
  
 Create a new function in your Appwrite console. Choose the Node.js runtime.
