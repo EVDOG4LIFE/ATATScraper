@@ -12,7 +12,7 @@ This is a sample working Node.js function that's designed to check the availabil
 ### Step 1: Add the Function to Appwrite
  
 Create a new function in your Appwrite console. Choose the Node.js runtime.
-
+ 
 ### Step 2: Configure Environment Variable
 
 In the function settings in the Appwrite console, add an environment variable:
