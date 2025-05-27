@@ -4,7 +4,7 @@ This is a sample working Node.js function that's designed to check the availabil
 
 ## Prerequisites
 
-- An Appwrite server setup and running.
+- An Appwrite server setup and running. 
 - A project created in Appwrite with this function added.
 
 ## Setup Instructions
